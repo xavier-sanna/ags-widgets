@@ -1,0 +1,3 @@
+[tools]
+watchexec = "latest"
+"npm:sass" = "latest"

@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#MISE description="Run AGS with auto-reload on file changes"
+#USAGE arg "<entry-file>" help="AGS entry file to run"
+#USAGE arg "[ags-args]" var=#true help="Extra args passed to ags run"
+
+set -euo pipefail
+
+entry="${usage_entry_file:?}"
+
+if [[ ! -f "$entry" ]]; then
+  echo "Entry file not found: $entry" >&2
+  exit 1
+fi
+
+if ! command -v watchexec >/dev/null 2>&1; then
+  cat <<'EOF' >&2
+watchexec is required for agsdev.
+Install it with:
+  mise use -g watchexec@latest
+EOF
+  exit 1
+fi
+
+if ! command -v ags >/dev/null 2>&1; then
+  cat <<'EOF' >&2
+ags executable is required for agsdev.
+Install/configure AGS and ensure `ags` is on PATH.
+EOF
+  exit 1
+fi
+
+# Tune these lists to control what triggers restarts.
+watch_path="$(dirname "$entry")"
+watch_paths=("$watch_path")
+watch_exts="ts,tsx,scss"
+ignore_paths=(
+  ".git"
+  "node_modules"
+  ".mise"
+  "dist"
+  "build"
+)
+
+ags_args=()
+if [[ -n "${usage_ags_args:-}" ]]; then
+  # usage variadics are shell-escaped; convert to a bash array.
+  eval "ags_args=(${usage_ags_args})"
+fi
+
+watchexec_args=(
+  --restart
+  --clear
+  --exts "$watch_exts"
+)
+
+for path in "${watch_paths[@]}"; do
+  watchexec_args+=(--watch "$path")
+done
+
+for path in "${ignore_paths[@]}"; do
+  watchexec_args+=(--ignore "$path")
+done
+
+watchexec "${watchexec_args[@]}" -- ags run "$entry" "${ags_args[@]}"
