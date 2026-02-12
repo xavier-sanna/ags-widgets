@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Build the CLI"
+
+ags types -u -d .
+
+# vim: ft=bash
