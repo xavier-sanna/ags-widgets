@@ -1,4 +1,2 @@
-node_modules
-env.d.ts
-@girs
-tsconfig.json
+node_modules/
+@girs/

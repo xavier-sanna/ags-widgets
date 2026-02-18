@@ -1,6 +1,91 @@
-window {
-  // background-color: transparent;
-  color: white;
+window.superbar {
+  background: transparent;
+  color: #f2f3f5;
+  font-size: 13px;
+  font-weight: 600;
 }
 
+window.superbar > centerbox.bar-root {
+  margin: 8px 10px 0;
+  padding: 0;
+}
 
+.bar-left,
+.bar-center,
+.bar-right {
+  background: rgba(20, 21, 24, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  margin: 0 6px;
+  padding: 4px 8px;
+  min-height: 30px;
+}
+
+.programs,
+.workspaces {
+  margin: 0;
+  padding: 0;
+}
+
+button {
+  border-radius: 8px;
+  min-height: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+button.program {
+  min-width: 30px;
+}
+
+.workspaces .workspace-item {
+  margin: 0 4px;
+}
+
+.workspaces .key-button {
+  background: rgba(15, 16, 19, 0.82);
+  border: 1px solid rgba(155, 170, 190, 0.35);
+  border-radius: 9px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.workspaces .key-button.active {
+  background: rgba(86, 168, 255, 0.24);
+  border-color: rgba(111, 193, 255, 0.65);
+}
+
+.workspaces .workspace-clients {
+  background: rgba(242, 244, 248, 0.95);
+  border: 1px solid rgba(18, 22, 31, 0.36);
+  border-radius: 8px;
+  margin-left: 6px;
+  padding: 0 4px 0 2px;
+}
+
+.workspaces .client {
+  color: #111824;
+  font-size: 1.2rem;
+  margin: 0 5px 0 8px;
+}
+
+.workspaces .client.active {
+  color: #0d76df;
+}
+
+.workspaces .workspace-item.has-single-client,
+.workspaces .workspace-item.has-clients {
+  margin: 0 8px;
+}
+
+.workspaces .workspace-item.has-single-client .key-button,
+.workspaces .workspace-item.has-clients .key-button {
+  margin-right: 4px;
+}
+
+.clock,
+.date {
+  margin: 0;
+  padding: 0;
+}
