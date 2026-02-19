@@ -94,15 +94,26 @@ type RunningProgram = {
 
 type TrayItemLike = {
   itemId?: string;
+  item_id?: string;
   id?: string;
   title?: string;
   tooltipMarkup?: string;
+  tooltip_markup?: string;
   tooltipText?: string;
+  tooltip_text?: string;
   iconName?: string;
+  icon_name?: string;
   gicon?: any;
   isMenu?: boolean;
+  is_menu?: boolean;
+  about_to_show?: () => void;
+  menu_model?: any;
+  menuModel?: any;
+  action_group?: any;
+  actionGroup?: any;
   activate?: (x: number, y: number) => void;
   secondaryActivate?: (x: number, y: number) => void;
+  secondary_activate?: (x: number, y: number) => void;
   connect?: (signal: string, callback: (...args: unknown[]) => void) => number;
   disconnect?: (id: number) => void;
 };
@@ -485,33 +496,94 @@ function roundToInt(value: number): number {
   return Number.isFinite(value) ? Math.round(value) : 0;
 }
 
+function trayPointerPosition(): [number, number] {
+  const display = Gdk.Display.get_default();
+  const seat = display?.get_default_seat();
+  const pointer = seat?.get_pointer();
+  if (pointer) {
+    const [ok, x, y] = pointer.get_position();
+    if (ok) {
+      return [roundToInt(x), roundToInt(y)];
+    }
+  }
+
+  return [0, 0];
+}
+
 function trayPrimaryClick(item: TrayItemLike, x = 0, y = 0) {
+  const px = roundToInt(x);
+  const py = roundToInt(y);
+  const isMenu = item.is_menu ?? item.isMenu ?? false;
+  const activate = item.activate;
+  const secondaryActivate = item.secondary_activate ?? item.secondaryActivate;
+
   try {
-    if (item.isMenu) {
-      item.secondaryActivate?.(roundToInt(x), roundToInt(y));
+    if (isMenu) {
+      item.about_to_show?.();
+      if (secondaryActivate) {
+        secondaryActivate(px, py);
+      } else {
+        activate?.(px, py);
+      }
       return;
     }
-    item.activate?.(roundToInt(x), roundToInt(y));
+
+    activate?.(px, py);
   } catch {
     // no-op
   }
 }
 
 function traySecondaryClick(item: TrayItemLike, x = 0, y = 0) {
+  const px = roundToInt(x);
+  const py = roundToInt(y);
+  const secondaryActivate = item.secondary_activate ?? item.secondaryActivate;
+
   try {
-    item.secondaryActivate?.(roundToInt(x), roundToInt(y));
+    item.about_to_show?.();
+    secondaryActivate?.(px, py);
   } catch {
     // no-op
   }
 }
 
+function trayIsMenuItem(item: TrayItemLike): boolean {
+  return item.is_menu ?? item.isMenu ?? false;
+}
+
+function trayMenuModel(item: TrayItemLike): any | null {
+  return item.menu_model ?? item.menuModel ?? null;
+}
+
+function trayActionGroup(item: TrayItemLike): any | null {
+  return item.action_group ?? item.actionGroup ?? null;
+}
+
+function attachTrayRightClick(
+  widget: Gtk.Widget,
+  item: TrayItemLike,
+  onRightClick?: (x: number, y: number) => void,
+) {
+  const secondary = Gtk.GestureClick.new();
+  secondary.set_button(3);
+  secondary.connect("pressed", (_gesture, _nPress, x, y) => {
+    if (onRightClick) {
+      onRightClick(x, y);
+      return;
+    }
+
+    traySecondaryClick(item, x, y);
+  });
+  widget.add_controller(secondary);
+}
+
 function trayTooltip(item: TrayItemLike): { markup?: string; text?: string } {
-  const markup = item.tooltipMarkup?.trim();
+  const markup = (item.tooltip_markup ?? item.tooltipMarkup)?.trim();
   if (markup) {
     return { markup };
   }
 
-  const text = item.tooltipText?.trim() || item.title?.trim();
+  const text = (item.tooltip_text ?? item.tooltipText)?.trim() || item.title?.trim();
   if (text) {
     return { text };
   }
@@ -520,7 +592,7 @@ function trayTooltip(item: TrayItemLike): { markup?: string; text?: string } {
 }
 
 function trayIconName(item: TrayItemLike): string {
-  const icon = item.iconName?.trim();
+  const icon = (item.icon_name ?? item.iconName)?.trim();
   return icon || "image-missing";
 }
 
@@ -680,16 +752,83 @@ function Programs({ programs }: { programs: Accessor<RunningProgram[]> }) {
 
 function Systray({ items }: { items: Accessor<TrayItemLike[]> }) {
   return (
-    <box class="systray" spacing={4}>
+    <box class="systray" spacing={4} canTarget>
       <For each={items}>
         {(item) => {
           const tooltip = trayTooltip(item);
+          const menuModel = trayMenuModel(item);
+
+          if (menuModel) {
+            return (
+              <menubutton
+                class="systray-item themed-button glowable"
+                tooltipMarkup={tooltip.markup}
+                tooltipText={tooltip.text}
+                canTarget
+                $={(self) => {
+                  const widget = self as Gtk.Widget;
+                  const menuButton = self as Gtk.MenuButton;
+                  const openMenu = () => {
+                    item.about_to_show?.();
+                    const latestModel = trayMenuModel(item);
+                    if (!latestModel) {
+                      const [x, y] = trayPointerPosition();
+                      trayPrimaryClick(item, x, y);
+                      return;
+                    }
+
+                    const actionGroup = trayActionGroup(item);
+                    if (actionGroup) {
+                      widget.insert_action_group("dbusmenu", actionGroup);
+                    }
+
+                    const popover = Gtk.PopoverMenu.new_from_model(latestModel);
+                    if (actionGroup) {
+                      popover.insert_action_group("dbusmenu", actionGroup);
+                    }
+
+                    menuButton.set_popover(popover);
+                    menuButton.popup();
+                  };
+
+                  menuButton.connect("activate", () => {
+                    openMenu();
+                  });
+
+                  const primary = Gtk.GestureClick.new();
+                  primary.set_button(1);
+                  primary.connect("released", () => {
+                    openMenu();
+                  });
+                  widget.add_controller(primary);
+
+                  attachTrayRightClick(widget, item, () => {
+                    openMenu();
+                  });
+                }}
+              >
+                {item.gicon ? (
+                  <image gicon={item.gicon} pixelSize={18} />
+                ) : (
+                  <image iconName={trayIconName(item)} pixelSize={18} />
+                )}
+              </menubutton>
+            );
+          }
+
           return (
             <button
               class="systray-item themed-button glowable"
               tooltipMarkup={tooltip.markup}
               tooltipText={tooltip.text}
-              onClicked={() => trayPrimaryClick(item)}
+              canTarget
+              onClicked={() => {
+                const [x, y] = trayPointerPosition();
+                trayPrimaryClick(item, x, y);
+              }}
+              $={(self) => {
+                attachTrayRightClick(self as Gtk.Widget, item);
+              }}
             >
               {item.gicon ? (
                 <image gicon={item.gicon} pixelSize={18} />
@@ -728,7 +867,7 @@ app.start({
     let queuedIncludeClients = false;
     let queuedIncludeStatic = false;
 
-    const refreshTrayItems = () => {
+    const refreshTrayItems = (force = false) => {
       const items = trayItemsFromSource(tray);
       const seen = new Set<TrayItemLike>();
 
@@ -739,12 +878,12 @@ app.start({
         }
 
         const ids = [
-          tryConnectSignal(item, "changed", refreshTrayItems),
-          tryConnectSignal(item, "ready", refreshTrayItems),
-          tryConnectSignal(item, "notify::gicon", refreshTrayItems),
-          tryConnectSignal(item, "notify::icon-name", refreshTrayItems),
-          tryConnectSignal(item, "notify::tooltip-markup", refreshTrayItems),
-          tryConnectSignal(item, "notify::tooltip-text", refreshTrayItems),
+          tryConnectSignal(item, "changed", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "ready", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::gicon", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::icon-name", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::tooltip-markup", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::tooltip-text", () => refreshTrayItems(true)),
         ].filter((id): id is number => id !== null);
 
         trayItemSignalIds.set(item, ids);
@@ -761,7 +900,14 @@ app.start({
         trayItemSignalIds.delete(item);
       }
 
-      setTrayItems([...items]);
+      const previousItems = trayItems();
+      const changed =
+        previousItems.length !== items.length ||
+        previousItems.some((existing, index) => existing !== items[index]);
+
+      if (force || changed) {
+        setTrayItems([...items]);
+      }
     };
 
     const clearTray = () => {
@@ -812,13 +958,13 @@ app.start({
       setTrayEnabled(true);
 
       const ids = [
-        tryConnectSignal(tray, "item-added", refreshTrayItems),
-        tryConnectSignal(tray, "item-removed", refreshTrayItems),
-        tryConnectSignal(tray, "notify::items", refreshTrayItems),
+        tryConnectSignal(tray, "item-added", () => refreshTrayItems(true)),
+        tryConnectSignal(tray, "item-removed", () => refreshTrayItems(true)),
+        tryConnectSignal(tray, "notify::items", () => refreshTrayItems(true)),
       ].filter((id): id is number => id !== null);
       traySignalIds.push(...ids);
 
-      refreshTrayItems();
+      refreshTrayItems(true);
     };
 
     void setupTray();
@@ -914,7 +1060,7 @@ app.start({
           anchor={TOP | LEFT | RIGHT}
           application={app}
         >
-          <box class="bar-root" orientation={Gtk.Orientation.HORIZONTAL} spacing={0} hexpand canTarget={false}>
+          <box class="bar-root" orientation={Gtk.Orientation.HORIZONTAL} spacing={0} hexpand>
             <box class="bar-slot bar-slot-left" hexpand>
               {mainMonitor ? (
                 <box class="bar-left themed-panel glowable" spacing={4} halign={Gtk.Align.START}>
