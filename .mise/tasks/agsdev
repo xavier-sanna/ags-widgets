@@ -31,8 +31,8 @@ fi
 
 # Tune these lists to control what triggers restarts.
 watch_path="$(dirname "$entry")"
-watch_paths=("$watch_path")
-watch_exts="ts,tsx,scss"
+watch_paths=("$watch_path" ".")
+watch_exts="ts,tsx,scss,json"
 ignore_paths=(
   ".git"
   "node_modules"

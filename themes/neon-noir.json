@@ -1,0 +1,27 @@
+{
+  "name": "neon-noir",
+  "panel": {
+    "background": "rgba(20, 21, 35, 0.82)",
+    "border": "rgba(0, 236, 255, 0.48)",
+    "text": "#def7ff"
+  },
+  "button": {
+    "background": "rgba(16, 17, 29, 0.86)",
+    "border": "rgba(255, 66, 199, 0.4)",
+    "text": "#def7ff",
+    "activeBackground": "rgba(1, 238, 255, 0.2)",
+    "activeBorder": "rgba(255, 88, 216, 0.82)"
+  },
+  "chip": {
+    "background": "rgba(220, 253, 255, 0.92)",
+    "border": "rgba(0, 178, 199, 0.45)",
+    "text": "#101628",
+    "iconActive": "#ff35bf"
+  },
+  "text": {
+    "muted": "rgba(214, 248, 255, 0.92)"
+  },
+  "glow": {
+    "shadow": "0 0 10px rgba(0, 237, 255, 0.22), 0 0 17px rgba(255, 67, 198, 0.16)"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "synthwave",
+  "panel": {
+    "background": "rgba(40, 18, 72, 0.8)",
+    "border": "rgba(253, 104, 255, 0.5)",
+    "text": "#f8ecff"
+  },
+  "button": {
+    "background": "rgba(30, 15, 56, 0.85)",
+    "border": "rgba(117, 247, 255, 0.42)",
+    "text": "#f8ecff",
+    "activeBackground": "rgba(255, 60, 205, 0.24)",
+    "activeBorder": "rgba(108, 246, 255, 0.86)"
+  },
+  "chip": {
+    "background": "rgba(248, 237, 255, 0.92)",
+    "border": "rgba(112, 47, 225, 0.5)",
+    "text": "#1b0f2a",
+    "iconActive": "#ff2fbe"
+  },
+  "text": {
+    "muted": "rgba(246, 227, 255, 0.9)"
+  },
+  "glow": {
+    "shadow": "0 0 11px rgba(250, 73, 255, 0.28), 0 0 19px rgba(76, 234, 255, 0.18)"
+  }
+}

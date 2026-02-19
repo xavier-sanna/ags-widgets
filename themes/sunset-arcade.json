@@ -1,0 +1,27 @@
+{
+  "name": "sunset-arcade",
+  "panel": {
+    "background": "rgba(66, 24, 54, 0.82)",
+    "border": "rgba(255, 149, 129, 0.5)",
+    "text": "#ffe9f2"
+  },
+  "button": {
+    "background": "rgba(52, 20, 43, 0.86)",
+    "border": "rgba(255, 204, 104, 0.45)",
+    "text": "#ffe9f2",
+    "activeBackground": "rgba(255, 162, 89, 0.23)",
+    "activeBorder": "rgba(255, 113, 170, 0.84)"
+  },
+  "chip": {
+    "background": "rgba(255, 240, 229, 0.92)",
+    "border": "rgba(194, 76, 111, 0.5)",
+    "text": "#291326",
+    "iconActive": "#ff3e89"
+  },
+  "text": {
+    "muted": "rgba(255, 231, 242, 0.93)"
+  },
+  "glow": {
+    "shadow": "0 0 11px rgba(255, 130, 109, 0.22), 0 0 19px rgba(255, 96, 168, 0.17)"
+  }
+}

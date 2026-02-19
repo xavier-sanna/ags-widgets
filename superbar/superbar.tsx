@@ -5,6 +5,7 @@ import { For, createEffect, createState, type Accessor } from "ags";
 import { createSubprocess, execAsync } from "ags/process";
 import { createPoll } from "ags/time";
 import GLib from "gi://GLib?version=2.0";
+import { createThemedWindowClass, getThemeVariablesCss, handleThemeRequest } from "../lib/theme";
 
 type HyprWorkspace = {
   id: number;
@@ -91,6 +92,28 @@ type RunningProgram = {
   tooltip: string;
 };
 
+type TrayItemLike = {
+  itemId?: string;
+  id?: string;
+  title?: string;
+  tooltipMarkup?: string;
+  tooltipText?: string;
+  iconName?: string;
+  gicon?: any;
+  isMenu?: boolean;
+  activate?: (x: number, y: number) => void;
+  secondaryActivate?: (x: number, y: number) => void;
+  connect?: (signal: string, callback: (...args: unknown[]) => void) => number;
+  disconnect?: (id: number) => void;
+};
+
+type TrayLike = {
+  items?: unknown[];
+  get_items?: () => unknown[];
+  connect?: (signal: string, callback: (...args: unknown[]) => void) => number;
+  disconnect?: (id: number) => void;
+};
+
 type HyprEvent = {
   tick: number;
   line: string;
@@ -102,6 +125,7 @@ const BAR_NAMESPACE = "ags-superbar";
 const CLIENTS_CONFIG_PATH = `${GLib.get_home_dir()}/.config/eww/includes/widgets/workspace/clients-config.json`;
 const HYPR_FALLBACK_POLL_MS = 4000;
 const HYPR_STATIC_POLL_MS = 60000;
+const TRAY_FALLBACK_POLL_MS = 3000;
 const HYPR_CLIENT_EVENT_PREFIXES = [
   "openwindow>>",
   "openwindowv2>>",
@@ -406,6 +430,100 @@ function focusClient(address: string) {
   void execAsync(["hyprctl", "dispatch", "focuswindow", `address:${address}`]).catch(() => {});
 }
 
+function tryConnectSignal(
+  object: { connect?: (signal: string, callback: (...args: unknown[]) => void) => number } | null | undefined,
+  signal: string,
+  callback: (...args: unknown[]) => void,
+): number | null {
+  if (!object?.connect) {
+    return null;
+  }
+
+  try {
+    const id = object.connect(signal, callback);
+    return typeof id === "number" ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function tryDisconnectSignal(
+  object: { disconnect?: (id: number) => void } | null | undefined,
+  id: number | null,
+) {
+  if (!object?.disconnect || id === null) {
+    return;
+  }
+
+  try {
+    object.disconnect(id);
+  } catch {
+    // no-op
+  }
+}
+
+function trayItemsFromSource(tray: TrayLike | null): TrayItemLike[] {
+  if (!tray) {
+    return [];
+  }
+
+  if (Array.isArray(tray.items)) {
+    return tray.items as TrayItemLike[];
+  }
+
+  if (typeof tray.get_items === "function") {
+    const items = tray.get_items();
+    if (Array.isArray(items)) {
+      return items as TrayItemLike[];
+    }
+  }
+
+  return [];
+}
+
+function roundToInt(value: number): number {
+  return Number.isFinite(value) ? Math.round(value) : 0;
+}
+
+function trayPrimaryClick(item: TrayItemLike, x = 0, y = 0) {
+  try {
+    if (item.isMenu) {
+      item.secondaryActivate?.(roundToInt(x), roundToInt(y));
+      return;
+    }
+    item.activate?.(roundToInt(x), roundToInt(y));
+  } catch {
+    // no-op
+  }
+}
+
+function traySecondaryClick(item: TrayItemLike, x = 0, y = 0) {
+  try {
+    item.secondaryActivate?.(roundToInt(x), roundToInt(y));
+  } catch {
+    // no-op
+  }
+}
+
+function trayTooltip(item: TrayItemLike): { markup?: string; text?: string } {
+  const markup = item.tooltipMarkup?.trim();
+  if (markup) {
+    return { markup };
+  }
+
+  const text = item.tooltipText?.trim() || item.title?.trim();
+  if (text) {
+    return { text };
+  }
+
+  return {};
+}
+
+function trayIconName(item: TrayItemLike): string {
+  const icon = item.iconName?.trim();
+  return icon || "image-missing";
+}
+
 function barWindows() {
   return app.windows.filter((window) => window.name?.startsWith(BAR_WINDOW_NAME_PREFIX));
 }
@@ -430,11 +548,21 @@ function toggleBars(): string {
 }
 
 function requestHandler(argv: string[], respond: (response: string) => void) {
-  const args = argv.filter(Boolean);
-  const command =
+  const args = argv
+    .filter(Boolean)
+    .filter((part) => part !== "ags" && !part.endsWith("/ags"));
+  const scopedArgs =
     args[0] === "superbar" || args[0] === "bar"
-      ? args[1]
-      : args[0];
+      ? args.slice(1)
+      : args;
+
+  const themeResponse = handleThemeRequest(scopedArgs);
+  if (themeResponse) {
+    respond(themeResponse);
+    return;
+  }
+
+  const command = scopedArgs[0];
 
   switch (command) {
     case "show":
@@ -453,7 +581,7 @@ function requestHandler(argv: string[], respond: (response: string) => void) {
       return;
     }
     default:
-      respond('usage: ags request superbar <show|hide|toggle|status>');
+      respond('usage: ags request superbar <show|hide|toggle|status|theme ...|glow ...>');
       return;
   }
 }
@@ -493,7 +621,10 @@ function Workspaces({
 
           const keyButtonClass = [
             "key-button",
+            "themed-button",
+            "glowable",
             workspace.active ? "active" : "",
+            workspace.active ? "themed-button-active" : "",
             workspace.empty ? "empty" : "",
           ]
             .filter(Boolean)
@@ -506,9 +637,16 @@ function Workspaces({
               </button>
 
               {workspace.clients.length > 0 ? (
-                <box class="workspace-clients" halign={Gtk.Align.START} spacing={0}>
+                <box class="workspace-clients themed-chip" halign={Gtk.Align.CENTER} spacing={0} homogeneous>
                   {workspace.clients.map((client) => (
-                    <label class={client.active ? "client active" : "client"} label={client.icon} />
+                    <box class="workspace-client-cell" halign={Gtk.Align.CENTER}>
+                      <label
+                        class={client.active ? "client active themed-chip-icon-active" : "client"}
+                        label={client.icon}
+                        xalign={0.5}
+                        justify={Gtk.Justification.CENTER}
+                      />
+                    </box>
                   ))}
                 </box>
               ) : (
@@ -527,7 +665,11 @@ function Programs({ programs }: { programs: Accessor<RunningProgram[]> }) {
     <box class="programs" spacing={4}>
       <For each={programs}>
         {(program) => (
-          <button class="program" tooltipText={program.tooltip} onClicked={() => focusClient(program.address)}>
+          <button
+            class="program themed-button glowable"
+            tooltipText={program.tooltip}
+            onClicked={() => focusClient(program.address)}
+          >
             <image iconName={program.iconName} pixelSize={18} />
           </button>
         )}
@@ -536,22 +678,150 @@ function Programs({ programs }: { programs: Accessor<RunningProgram[]> }) {
   );
 }
 
+function Systray({ items }: { items: Accessor<TrayItemLike[]> }) {
+  return (
+    <box class="systray" spacing={4}>
+      <For each={items}>
+        {(item) => {
+          const tooltip = trayTooltip(item);
+          return (
+            <button
+              class="systray-item themed-button glowable"
+              tooltipMarkup={tooltip.markup}
+              tooltipText={tooltip.text}
+              onClicked={() => trayPrimaryClick(item)}
+            >
+              {item.gicon ? (
+                <image gicon={item.gicon} pixelSize={18} />
+              ) : (
+                <image iconName={trayIconName(item)} pixelSize={18} />
+              )}
+            </button>
+          );
+        }}
+      </For>
+    </box>
+  );
+}
+
 app.start({
-  css: scss,
+  css: `${scss}\n${getThemeVariablesCss()}`,
   requestHandler,
   main() {
     const { TOP, LEFT, RIGHT } = Astal.WindowAnchor;
+    const superbarWindowClass = createThemedWindowClass("superbar");
     const [hypr, setHypr] = createState(EMPTY_HYPR_STATE);
+    const [trayItems, setTrayItems] = createState<TrayItemLike[]>([]);
+    const [trayEnabled, setTrayEnabled] = createState(false);
     const hyprEvents = createSubprocess<HyprEvent>({ tick: 0, line: "" }, hyprSocketCommand(), (stdout, previous) =>
       stdout.length > 0 ? { tick: previous.tick + 1, line: stdout } : previous,
     );
     const hyprFallbackTick = createPoll(0, HYPR_FALLBACK_POLL_MS, (previous) => previous + 1);
     const hyprStaticTick = createPoll(0, HYPR_STATIC_POLL_MS, (previous) => previous + 1);
+    const trayFallbackTick = createPoll(0, TRAY_FALLBACK_POLL_MS, (previous) => previous + 1);
     const now = createPoll(new Date(), 1000, () => new Date());
+    let tray: TrayLike | null = null;
+    const traySignalIds: number[] = [];
+    const trayItemSignalIds = new Map<TrayItemLike, number[]>();
     let refreshInFlight = false;
     let refreshQueued = false;
     let queuedIncludeClients = false;
     let queuedIncludeStatic = false;
+
+    const refreshTrayItems = () => {
+      const items = trayItemsFromSource(tray);
+      const seen = new Set<TrayItemLike>();
+
+      for (const item of items) {
+        seen.add(item);
+        if (trayItemSignalIds.has(item)) {
+          continue;
+        }
+
+        const ids = [
+          tryConnectSignal(item, "changed", refreshTrayItems),
+          tryConnectSignal(item, "ready", refreshTrayItems),
+          tryConnectSignal(item, "notify::gicon", refreshTrayItems),
+          tryConnectSignal(item, "notify::icon-name", refreshTrayItems),
+          tryConnectSignal(item, "notify::tooltip-markup", refreshTrayItems),
+          tryConnectSignal(item, "notify::tooltip-text", refreshTrayItems),
+        ].filter((id): id is number => id !== null);
+
+        trayItemSignalIds.set(item, ids);
+      }
+
+      for (const [item, ids] of trayItemSignalIds) {
+        if (seen.has(item)) {
+          continue;
+        }
+
+        for (const id of ids) {
+          tryDisconnectSignal(item, id);
+        }
+        trayItemSignalIds.delete(item);
+      }
+
+      setTrayItems([...items]);
+    };
+
+    const clearTray = () => {
+      for (const [item, ids] of trayItemSignalIds) {
+        for (const id of ids) {
+          tryDisconnectSignal(item, id);
+        }
+      }
+      trayItemSignalIds.clear();
+
+      for (const id of traySignalIds) {
+        tryDisconnectSignal(tray, id);
+      }
+      traySignalIds.length = 0;
+
+      tray = null;
+      setTrayEnabled(false);
+      setTrayItems([]);
+    };
+
+    const setupTray = async () => {
+      clearTray();
+      const module = await import("gi://AstalTray").catch(() => null);
+      if (!module) {
+        console.error("[superbar] AstalTray is not available; systray area will stay empty.");
+        return;
+      }
+
+      const namespace = ((module as { default?: unknown }).default ?? module) as {
+        get_default?: () => unknown;
+        Tray?: {
+          get_default?: () => unknown;
+          new?: () => unknown;
+        };
+      };
+
+      const trayInstance =
+        namespace.get_default?.() ||
+        namespace.Tray?.get_default?.() ||
+        (typeof namespace.Tray?.new === "function" ? namespace.Tray.new() : null);
+
+      if (!trayInstance) {
+        console.error("[superbar] AstalTray loaded but no tray instance could be created.");
+        return;
+      }
+
+      tray = trayInstance as TrayLike;
+      setTrayEnabled(true);
+
+      const ids = [
+        tryConnectSignal(tray, "item-added", refreshTrayItems),
+        tryConnectSignal(tray, "item-removed", refreshTrayItems),
+        tryConnectSignal(tray, "notify::items", refreshTrayItems),
+      ].filter((id): id is number => id !== null);
+      traySignalIds.push(...ids);
+
+      refreshTrayItems();
+    };
+
+    void setupTray();
 
     const refreshHyprState = async (
       options: {
@@ -619,18 +889,24 @@ app.start({
       }
     });
 
+    createEffect(() => {
+      const tick = trayFallbackTick();
+      if (tick > 0 && trayEnabled()) {
+        refreshTrayItems();
+      }
+    });
+
     return app.get_monitors().map((gdkmonitor, index) => {
       const monitorName = gdkmonitor.connector ?? "";
       const mainMonitor = monitorName === MAIN_MONITOR;
       const workspaces = hypr((state) => workspaceDisplayForMonitor(state, monitorName));
-      const programs = hypr((state) => runningProgramsForMonitor(state, monitorName));
 
       return (
         <window
           visible={false}
           name={`${BAR_WINDOW_NAME_PREFIX}${index}`}
           namespace={BAR_NAMESPACE}
-          class="superbar"
+          class={superbarWindowClass}
           gdkmonitor={gdkmonitor}
           layer={Astal.Layer.OVERLAY}
           keymode={Astal.Keymode.NONE}
@@ -638,26 +914,35 @@ app.start({
           anchor={TOP | LEFT | RIGHT}
           application={app}
         >
-          <centerbox class="bar-root">
-            <box $type="start" class="bar-left" spacing={4} visible={mainMonitor}>
-              {mainMonitor ? <Programs programs={programs} /> : <box />}
-            </box>
-
-            <box $type="center" class="bar-center" halign={Gtk.Align.CENTER}>
-              <Workspaces workspaces={workspaces} />
-            </box>
-
-            <box $type="end" class="bar-right" spacing={8} visible={mainMonitor}>
+          <box class="bar-root" orientation={Gtk.Orientation.HORIZONTAL} spacing={0} hexpand canTarget={false}>
+            <box class="bar-slot bar-slot-left" hexpand>
               {mainMonitor ? (
-                <>
-                  <label class="clock" label={now((date) => formatTime(date))} />
-                  <label class="date" label={now((date) => formatDate(date))} />
-                </>
+                <box class="bar-left themed-panel glowable" spacing={4} halign={Gtk.Align.START}>
+                  <Systray items={trayItems} />
+                </box>
               ) : (
                 <box />
               )}
             </box>
-          </centerbox>
+
+            <box class="bar-slot bar-slot-center" canTarget={false}>
+              <box class="bar-center themed-panel glowable" halign={Gtk.Align.CENTER}>
+                <Workspaces workspaces={workspaces} />
+              </box>
+            </box>
+
+            <box class="bar-slot bar-slot-right" hexpand canTarget={false}>
+              <box hexpand />
+              {mainMonitor ? (
+                <box class="bar-right themed-panel glowable" spacing={8}>
+                  <label class="clock themed-text-muted" label={now((date) => formatTime(date))} />
+                  <label class="date themed-text-muted" label={now((date) => formatDate(date))} />
+                </box>
+              ) : (
+                <box />
+              )}
+            </box>
+          </box>
         </window>
       );
     });
