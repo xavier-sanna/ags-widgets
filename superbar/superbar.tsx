@@ -118,6 +118,16 @@ type TrayItemLike = {
   disconnect?: (id: number) => void;
 };
 
+type TrayItemSnapshot = {
+  itemId: string;
+  item: TrayItemLike;
+  tooltipMarkup?: string;
+  tooltipText?: string;
+  iconName: string;
+  gicon?: any;
+  menuModel: any | null;
+};
+
 type TrayLike = {
   items?: unknown[];
   get_items?: () => unknown[];
@@ -596,6 +606,40 @@ function trayIconName(item: TrayItemLike): string {
   return icon || "image-missing";
 }
 
+function traySnapshotId(item: TrayItemLike, index: number): string {
+  return (
+    [item.item_id, item.itemId, item.id, item.title]
+      .map((value) => value?.trim())
+      .find((value): value is string => Boolean(value)) || `tray-item-${index}`
+  );
+}
+
+function traySnapshot(item: TrayItemLike, index: number): TrayItemSnapshot {
+  const tooltip = trayTooltip(item);
+
+  return {
+    itemId: traySnapshotId(item, index),
+    item,
+    tooltipMarkup: tooltip.markup,
+    tooltipText: tooltip.text,
+    iconName: trayIconName(item),
+    gicon: item.gicon,
+    menuModel: trayMenuModel(item),
+  };
+}
+
+function sameTraySnapshot(left: TrayItemSnapshot, right: TrayItemSnapshot): boolean {
+  return (
+    left.itemId === right.itemId &&
+    left.item === right.item &&
+    left.tooltipMarkup === right.tooltipMarkup &&
+    left.tooltipText === right.tooltipText &&
+    left.iconName === right.iconName &&
+    left.gicon === right.gicon &&
+    left.menuModel === right.menuModel
+  );
+}
+
 function barWindows() {
   return app.windows.filter((window) => window.name?.startsWith(BAR_WINDOW_NAME_PREFIX));
 }
@@ -750,20 +794,19 @@ function Programs({ programs }: { programs: Accessor<RunningProgram[]> }) {
   );
 }
 
-function Systray({ items }: { items: Accessor<TrayItemLike[]> }) {
+function Systray({ items }: { items: Accessor<TrayItemSnapshot[]> }) {
   return (
     <box class="systray" spacing={4} canTarget>
       <For each={items}>
-        {(item) => {
-          const tooltip = trayTooltip(item);
-          const menuModel = trayMenuModel(item);
+        {(snapshot) => {
+          const item = snapshot.item;
 
-          if (menuModel) {
+          if (snapshot.menuModel) {
             return (
               <menubutton
                 class="systray-item themed-button glowable"
-                tooltipMarkup={tooltip.markup}
-                tooltipText={tooltip.text}
+                tooltipMarkup={snapshot.tooltipMarkup}
+                tooltipText={snapshot.tooltipText}
                 canTarget
                 $={(self) => {
                   const widget = self as Gtk.Widget;
@@ -807,10 +850,10 @@ function Systray({ items }: { items: Accessor<TrayItemLike[]> }) {
                   });
                 }}
               >
-                {item.gicon ? (
-                  <image gicon={item.gicon} pixelSize={18} />
+                {snapshot.gicon ? (
+                  <image gicon={snapshot.gicon} pixelSize={18} />
                 ) : (
-                  <image iconName={trayIconName(item)} pixelSize={18} />
+                  <image iconName={snapshot.iconName} pixelSize={18} />
                 )}
               </menubutton>
             );
@@ -819,8 +862,8 @@ function Systray({ items }: { items: Accessor<TrayItemLike[]> }) {
           return (
             <button
               class="systray-item themed-button glowable"
-              tooltipMarkup={tooltip.markup}
-              tooltipText={tooltip.text}
+              tooltipMarkup={snapshot.tooltipMarkup}
+              tooltipText={snapshot.tooltipText}
               canTarget
               onClicked={() => {
                 const [x, y] = trayPointerPosition();
@@ -830,10 +873,10 @@ function Systray({ items }: { items: Accessor<TrayItemLike[]> }) {
                 attachTrayRightClick(self as Gtk.Widget, item);
               }}
             >
-              {item.gicon ? (
-                <image gicon={item.gicon} pixelSize={18} />
+              {snapshot.gicon ? (
+                <image gicon={snapshot.gicon} pixelSize={18} />
               ) : (
-                <image iconName={trayIconName(item)} pixelSize={18} />
+                <image iconName={snapshot.iconName} pixelSize={18} />
               )}
             </button>
           );
@@ -850,7 +893,7 @@ app.start({
     const { TOP, LEFT, RIGHT } = Astal.WindowAnchor;
     const superbarWindowClass = createThemedWindowClass("superbar");
     const [hypr, setHypr] = createState(EMPTY_HYPR_STATE);
-    const [trayItems, setTrayItems] = createState<TrayItemLike[]>([]);
+    const [trayItems, setTrayItems] = createState<TrayItemSnapshot[]>([]);
     const [trayEnabled, setTrayEnabled] = createState(false);
     const hyprEvents = createSubprocess<HyprEvent>({ tick: 0, line: "" }, hyprSocketCommand(), (stdout, previous) =>
       stdout.length > 0 ? { tick: previous.tick + 1, line: stdout } : previous,
@@ -868,10 +911,10 @@ app.start({
     let queuedIncludeStatic = false;
 
     const refreshTrayItems = (force = false) => {
-      const items = trayItemsFromSource(tray);
+      const rawItems = trayItemsFromSource(tray);
       const seen = new Set<TrayItemLike>();
 
-      for (const item of items) {
+      for (const item of rawItems) {
         seen.add(item);
         if (trayItemSignalIds.has(item)) {
           continue;
@@ -880,8 +923,15 @@ app.start({
         const ids = [
           tryConnectSignal(item, "changed", () => refreshTrayItems(true)),
           tryConnectSignal(item, "ready", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::status", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::title", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::tooltip", () => refreshTrayItems(true)),
           tryConnectSignal(item, "notify::gicon", () => refreshTrayItems(true)),
           tryConnectSignal(item, "notify::icon-name", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::icon-theme-path", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::icon-pixbuf", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::menu-model", () => refreshTrayItems(true)),
+          tryConnectSignal(item, "notify::is-menu", () => refreshTrayItems(true)),
           tryConnectSignal(item, "notify::tooltip-markup", () => refreshTrayItems(true)),
           tryConnectSignal(item, "notify::tooltip-text", () => refreshTrayItems(true)),
         ].filter((id): id is number => id !== null);
@@ -900,13 +950,14 @@ app.start({
         trayItemSignalIds.delete(item);
       }
 
+      const snapshots = rawItems.map((item, index) => traySnapshot(item, index));
       const previousItems = trayItems();
       const changed =
-        previousItems.length !== items.length ||
-        previousItems.some((existing, index) => existing !== items[index]);
+        previousItems.length !== snapshots.length ||
+        previousItems.some((existing, index) => !sameTraySnapshot(existing, snapshots[index]));
 
       if (force || changed) {
-        setTrayItems([...items]);
+        setTrayItems(snapshots);
       }
     };
 
